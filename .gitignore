@@ -1,0 +1,19 @@
+# окружение
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# кадры датасета — 808 МБ, воспроизводятся из исходных видео:
+#   python scripts/03_extract_trainset.py
+# разметка (labels/, review*.json, manifest.json) в репозитории и с ними сойдётся
+out/trainset/images/
+
+# результаты прогонов — пересоздаются
+out/runs/
+out/det_split/
+out/eval_tmp/
+out/probe/
+
+# веса моделей
+*.pt

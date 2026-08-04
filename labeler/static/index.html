@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>nova — разметка</title>
+<style>
+  :root{
+    --bg:#14161a; --panel:#1c2027; --line:#2c313a; --fg:#e6e9ef; --dim:#8b93a1;
+    --c0:#4da3ff; --c1:#ffd166; --c2:#ff5c7a; --c3:#38d996;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       height:100vh;display:flex;overflow:hidden;user-select:none}
+  #stage{flex:1;position:relative;background:#0d0f12}
+  /* width/height обязательны: canvas — замещаемый элемент, при width:auto он
+     берёт собственный размер холста (300x150), а не inset:0, и тогда запись
+     cv.width в resize() раздувает его на каждом кадре */
+  canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;display:block}
+  #side{width:260px;background:var(--panel);border-left:1px solid var(--line);
+        padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+  h2{margin:0;font-size:14px;letter-spacing:.4px}
+  .sec{border-top:1px solid var(--line);padding-top:12px}
+  .sec:first-of-type{border-top:0;padding-top:0}
+  label{display:block;color:var(--dim);font-size:11px;text-transform:uppercase;
+        letter-spacing:.6px;margin-bottom:5px}
+  select{width:100%;background:#252a33;color:var(--fg);border:1px solid var(--line);
+         border-radius:6px;padding:6px 8px;font-size:13px;margin-bottom:8px}
+  .tabs{display:flex;gap:6px;margin-bottom:2px}
+  .tab{flex:1;text-align:center;padding:6px 8px;border-radius:6px;cursor:pointer;
+       background:#252a33;border:1px solid var(--line);color:var(--dim);font-size:12px}
+  .tab.on{color:var(--fg);border-color:var(--c3);background:#1f2a26}
+  .cls{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
+       cursor:pointer;border:1px solid transparent}
+  .cls:hover{background:#252a33}
+  .cls.on{background:#252a33;border-color:currentColor}
+  .swatch{width:12px;height:12px;border-radius:3px;flex:none}
+  .key{margin-left:auto;color:var(--dim);font-size:11px;font-variant-numeric:tabular-nums}
+  .bar{height:6px;background:#252a33;border-radius:3px;overflow:hidden}
+  .bar > i{display:block;height:100%;background:var(--c3);transition:width .2s}
+  .row{display:flex;justify-content:space-between;gap:8px}
+  .dim{color:var(--dim)}
+  kbd{background:#252a33;border:1px solid var(--line);border-bottom-width:2px;
+      border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}
+  #hint{position:absolute;left:12px;bottom:12px;background:rgba(20,22,26,.92);
+        border:1px solid var(--line);border-radius:8px;padding:8px 11px;
+        font-size:11.5px;color:var(--dim);pointer-events:none;line-height:1.7}
+  #top{position:absolute;left:12px;top:12px;background:rgba(20,22,26,.92);
+       border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:12px}
+  #toast{position:absolute;right:12px;top:12px;background:rgba(20,22,26,.95);
+         border:1px solid var(--line);border-radius:8px;padding:7px 11px;
+         font-size:12px;opacity:0;transition:opacity .25s;pointer-events:none}
+  ul{margin:6px 0 0;padding-left:16px;color:var(--dim);font-size:11.5px;line-height:1.7}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="top">—</div>
+  <div id="toast"></div>
+  <div id="hint"></div>
+</div>
+
+<div id="side">
+  <h2>Разметка</h2>
+
+  <div class="sec">
+    <label>Режим</label>
+    <div class="tabs">
+      <div class="tab on" data-m="det">боксы</div>
+      <div class="tab" data-m="seg">полигоны</div>
+    </div>
+    <div class="dim" id="modenote" style="font-size:11px;margin-top:6px"></div>
+  </div>
+
+  <div class="sec">
+    <label>Классы</label>
+    <div id="classes"></div>
+  </div>
+
+  <div class="sec">
+    <label>Фильтр</label>
+    <select id="fch"><option value="">все каналы</option></select>
+    <select id="ftod">
+      <option value="">день и ночь</option><option value="day">день</option>
+      <option value="night">ночь</option>
+    </select>
+    <select id="fst">
+      <option value="todo">не размеченные</option><option value="">все</option>
+      <option value="done">готовые</option>
+    </select>
+  </div>
+
+  <div class="sec">
+    <label>Прогресс</label>
+    <div class="bar"><i id="pbar" style="width:0"></i></div>
+    <div class="row" style="margin-top:6px"><span id="pnum" class="dim">—</span></div>
+    <ul id="counts"></ul>
+  </div>
+
+  <div class="sec">
+    <label>Что размечать</label>
+    <ul id="guide"></ul>
+  </div>
+</div>
+
+<script>
+const PALETTE = {det:['#4da3ff','#ffd166','#ff5c7a','#38d996'],
+                 seg:['#ff5c7a','#ffd166']};
+const GUIDE = {
+  det: [['truck','грузовик целиком'],
+        ['truck_body','только кузов, по верхнему краю бортов'],
+        ['grapple','лапы грейфера, без стрелы'],
+        ['excavator','перегружатель с кабиной']],
+  seg: [['grapple','железо ковша: челюсти и то, что их держит. Обводить по\
+ металлу, зазоры между лапами — не ковш, там виден груз'],
+        ['scrap','лом: то, что в захвате, и то, что уже ссыпалось. Отдельным\
+ полигоном на каждый несвязный кусок']],
+};
+const HINT = {
+  det: `<kbd>1</kbd>…<kbd>4</kbd> класс · <kbd>A</kbd>/<kbd>D</kbd> листать · <kbd>E</kbd> пусто и дальше<br>
+        тянуть — новый бокс · клик — выбрать · <kbd>⌫</kbd> удалить · <kbd>⌘Z</kbd> отменить<br>
+        колесо — зум · <kbd>Space</kbd>+тянуть — панорама · <kbd>0</kbd> сброс зума`,
+  seg: `<kbd>1</kbd>/<kbd>2</kbd> класс · <kbd>A</kbd>/<kbd>D</kbd> листать · <kbd>E</kbd> пусто и дальше<br>
+        клик — точка контура · <kbd>⏎</kbd> или клик в первую точку — замкнуть · <kbd>Esc</kbd> сбросить<br>
+        тянуть вершину — правка · <kbd>⇧</kbd>+клик по ребру — вставить вершину<br>
+        <kbd>⌫</kbd> убрать точку / удалить полигон · <kbd>⌘Z</kbd> отменить · колесо — зум`,
+};
+
+let mode = 'det';
+let CFG = {}, CLASSES = [], COLORS = PALETTE.det;
+let items = [], idx = 0, cls = 0;
+let boxes = [], polys = [], pending = null, undoStack = [], dirty = false;
+let img = new Image(), view = {s:1, x:0, y:0}, fit = 1;
+let drag = null, sel = -1, panning = false, spaceHeld = false;
+
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const seg = () => mode === 'seg';
+
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.style.opacity = 1;
+  clearTimeout(t._h); t._h = setTimeout(()=>t.style.opacity = 0, 1100);
+}
+
+/* ---------- отрисовка ---------- */
+function resize(){
+  cv.width = cv.clientWidth * devicePixelRatio;
+  cv.height = cv.clientHeight * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  draw();
+}
+function resetView(){
+  if(!img.naturalWidth) return;
+  fit = Math.min(cv.clientWidth / img.naturalWidth, cv.clientHeight / img.naturalHeight);
+  view = {s: fit,
+          x: (cv.clientWidth - img.naturalWidth*fit)/2,
+          y: (cv.clientHeight - img.naturalHeight*fit)/2};
+}
+const toScreen = (nx,ny) => [view.x + nx*img.naturalWidth*view.s,
+                             view.y + ny*img.naturalHeight*view.s];
+const toNorm = (sx,sy) => [(sx - view.x)/(img.naturalWidth*view.s),
+                           (sy - view.y)/(img.naturalHeight*view.s)];
+
+function tag(text, x, y, col){
+  ctx.font = '600 11px -apple-system,sans-serif';
+  const w = ctx.measureText(text).width + 8;
+  ctx.fillStyle = col;
+  ctx.fillRect(x, y-15, w, 15);
+  ctx.fillStyle = '#14161a';
+  ctx.fillText(text, x+4, y-4);
+}
+
+function drawBoxes(){
+  boxes.forEach((b,i) => {
+    const [x1,y1] = toScreen(b.x - b.w/2, b.y - b.h/2);
+    const [x2,y2] = toScreen(b.x + b.w/2, b.y + b.h/2);
+    const col = COLORS[b.cls] || '#fff';
+    ctx.lineWidth = i === sel ? 2.5 : 1.5;
+    ctx.strokeStyle = col;
+    ctx.strokeRect(x1, y1, x2-x1, y2-y1);
+    ctx.fillStyle = col + '22';
+    ctx.fillRect(x1, y1, x2-x1, y2-y1);
+    tag(CLASSES[b.cls] || b.cls, x1, y1, col);
+    if(i === sel){                       // маркер для изменения размера
+      ctx.fillStyle = col;
+      ctx.fillRect(x2-4, y2-4, 8, 8);
+    }
+  });
+  if(drag && drag.mode === 'new'){
+    const [x1,y1] = toScreen(Math.min(drag.x0,drag.x1), Math.min(drag.y0,drag.y1));
+    const [x2,y2] = toScreen(Math.max(drag.x0,drag.x1), Math.max(drag.y0,drag.y1));
+    ctx.setLineDash([5,4]); ctx.lineWidth = 1.5;
+    ctx.strokeStyle = COLORS[cls];
+    ctx.strokeRect(x1,y1,x2-x1,y2-y1);
+    ctx.setLineDash([]);
+  }
+}
+
+function pathOf(pts){
+  ctx.beginPath();
+  for(let k = 0; k < pts.length; k += 2){
+    const [sx,sy] = toScreen(pts[k], pts[k+1]);
+    k ? ctx.lineTo(sx,sy) : ctx.moveTo(sx,sy);
+  }
+  ctx.closePath();
+}
+
+function drawPolys(){
+  polys.forEach((p,i) => {
+    const col = COLORS[p.cls] || '#fff';
+    pathOf(p.pts);
+    ctx.fillStyle = col + (i === sel ? '38' : '22');
+    ctx.fill();
+    ctx.lineWidth = i === sel ? 2.5 : 1.5;
+    ctx.strokeStyle = col;
+    ctx.stroke();
+
+    const [tx,ty] = toScreen(p.pts[0], p.pts[1]);
+    tag(CLASSES[p.cls] || p.cls, tx, ty, col);
+
+    if(i === sel){                       // вершины тянутся только у выбранного
+      ctx.fillStyle = col;
+      for(let k = 0; k < p.pts.length; k += 2){
+        const [sx,sy] = toScreen(p.pts[k], p.pts[k+1]);
+        ctx.fillRect(sx-3.5, sy-3.5, 7, 7);
+      }
+    }
+  });
+
+  if(pending && pending.length){
+    const col = COLORS[cls];
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+    ctx.setLineDash([5,4]);
+    ctx.beginPath();
+    for(let k = 0; k < pending.length; k += 2){
+      const [sx,sy] = toScreen(pending[k], pending[k+1]);
+      k ? ctx.lineTo(sx,sy) : ctx.moveTo(sx,sy);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = col;
+    for(let k = 0; k < pending.length; k += 2){
+      const [sx,sy] = toScreen(pending[k], pending[k+1]);
+      ctx.fillRect(sx-3, sy-3, 6, 6);
+    }
+    const [fx,fy] = toScreen(pending[0], pending[1]);   // цель замыкания
+    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(fx, fy, 7, 0, 6.284); ctx.stroke();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);
+  if(!img.naturalWidth) return;
+  ctx.imageSmoothingEnabled = view.s < 2;
+  ctx.drawImage(img, view.x, view.y,
+                img.naturalWidth*view.s, img.naturalHeight*view.s);
+  seg() ? drawPolys() : drawBoxes();
+}
+
+/* ---------- геометрия ---------- */
+function hitBox(nx,ny){
+  for(let i = boxes.length-1; i >= 0; i--){
+    const b = boxes[i];
+    if(Math.abs(nx-b.x) <= b.w/2 && Math.abs(ny-b.y) <= b.h/2) return i;
+  }
+  return -1;
+}
+function onHandle(sx,sy,i){
+  const b = boxes[i]; if(!b) return false;
+  const [hx,hy] = toScreen(b.x + b.w/2, b.y + b.h/2);
+  return Math.hypot(sx-hx, sy-hy) < 9;
+}
+function inPoly(pts,nx,ny){
+  let hit = false;
+  for(let i = 0, j = pts.length-2; i < pts.length; j = i, i += 2){
+    const xi = pts[i], yi = pts[i+1], xj = pts[j], yj = pts[j+1];
+    if((yi > ny) !== (yj > ny) && nx < (xj-xi)*(ny-yi)/(yj-yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+function hitPoly(nx,ny){
+  for(let i = polys.length-1; i >= 0; i--)
+    if(inPoly(polys[i].pts, nx, ny)) return i;
+  return -1;
+}
+/* индекс вершины выбранного полигона под курсором, иначе -1 */
+function hitVertex(sx,sy){
+  const p = polys[sel]; if(!p) return -1;
+  for(let k = 0; k < p.pts.length; k += 2){
+    const [vx,vy] = toScreen(p.pts[k], p.pts[k+1]);
+    if(Math.hypot(sx-vx, sy-vy) < 8) return k;
+  }
+  return -1;
+}
+/* ближайшее ребро выбранного полигона — точка вставки новой вершины */
+function hitEdge(sx,sy){
+  const p = polys[sel]; if(!p) return -1;
+  let best = -1, bd = 10;
+  for(let i = 0; i < p.pts.length; i += 2){
+    const j = (i + 2) % p.pts.length;
+    const [ax,ay] = toScreen(p.pts[i], p.pts[i+1]);
+    const [bx,by] = toScreen(p.pts[j], p.pts[j+1]);
+    const dx = bx-ax, dy = by-ay, len2 = dx*dx + dy*dy;
+    if(!len2) continue;
+    const t = Math.max(0, Math.min(1, ((sx-ax)*dx + (sy-ay)*dy) / len2));
+    const d = Math.hypot(sx - (ax + t*dx), sy - (ay + t*dy));
+    if(d < bd){ bd = d; best = j; }
+  }
+  return best;
+}
+
+/* ---------- мышь ---------- */
+cv.addEventListener('mousedown', e => {
+  const r = cv.getBoundingClientRect(), sx = e.clientX-r.left, sy = e.clientY-r.top;
+  if(spaceHeld || e.button === 1){
+    panning = {sx, sy, vx: view.x, vy: view.y}; return;
+  }
+  const [nx,ny] = toNorm(sx,sy);
+  seg() ? downSeg(sx,sy,nx,ny,e) : downDet(sx,sy,nx,ny);
+});
+
+function downDet(sx,sy,nx,ny){
+  if(sel >= 0 && onHandle(sx,sy,sel)){
+    pushUndo();
+    const b = boxes[sel];
+    drag = {mode:'resize', x0: b.x - b.w/2, y0: b.y - b.h/2, x1: nx, y1: ny};
+    return;
+  }
+  const h = hitBox(nx,ny);
+  if(h >= 0){
+    sel = h; pushUndo();
+    drag = {mode:'move', i:h, px:nx, py:ny}; draw(); return;
+  }
+  sel = -1;
+  drag = {mode:'new', x0:nx, y0:ny, x1:nx, y1:ny};
+  draw();
+}
+
+function downSeg(sx,sy,nx,ny,e){
+  if(pending){
+    const [fx,fy] = toScreen(pending[0], pending[1]);
+    if(pending.length >= 6 && Math.hypot(sx-fx, sy-fy) < 9){ closePoly(); return; }
+    pending.push(nx,ny); dirty = true; draw(); return;
+  }
+  if(sel >= 0){
+    const v = hitVertex(sx,sy);
+    if(v >= 0){ pushUndo(); drag = {mode:'vertex', k:v}; return; }
+    if(e.shiftKey){
+      const j = hitEdge(sx,sy);
+      if(j >= 0){
+        pushUndo();
+        polys[sel].pts.splice(j, 0, nx, ny);
+        dirty = true; drag = {mode:'vertex', k:j}; draw(); return;
+      }
+    }
+  }
+  const h = hitPoly(nx,ny);
+  if(h >= 0){ sel = h; draw(); return; }
+  sel = -1; pending = [nx,ny]; draw();   // клик по пустому — начали новый контур
+}
+
+function closePoly(){
+  if(!pending || pending.length < 6){ pending = null; draw(); return; }
+  pushUndo();
+  polys.push({cls, pts: pending});
+  sel = polys.length-1; pending = null; dirty = true; draw();
+}
+
+window.addEventListener('mousemove', e => {
+  const r = cv.getBoundingClientRect(), sx = e.clientX-r.left, sy = e.clientY-r.top;
+  if(panning){
+    view.x = panning.vx + (sx-panning.sx);
+    view.y = panning.vy + (sy-panning.sy);
+    draw(); return;
+  }
+  if(!drag) return;
+  const [nx,ny] = toNorm(sx,sy);
+  if(drag.mode === 'vertex'){
+    polys[sel].pts[drag.k] = nx; polys[sel].pts[drag.k+1] = ny;
+    dirty = true; draw(); return;
+  }
+  if(drag.mode === 'new' || drag.mode === 'resize'){ drag.x1 = nx; drag.y1 = ny; }
+  if(drag.mode === 'resize'){
+    const b = boxes[sel];
+    b.w = Math.abs(nx - drag.x0); b.h = Math.abs(ny - drag.y0);
+    b.x = (nx + drag.x0)/2;       b.y = (ny + drag.y0)/2;
+    dirty = true;
+  }
+  if(drag.mode === 'move'){
+    const b = boxes[drag.i];
+    b.x += nx - drag.px; b.y += ny - drag.py;
+    drag.px = nx; drag.py = ny; dirty = true;
+  }
+  draw();
+});
+
+window.addEventListener('mouseup', () => {
+  panning = false;
+  if(drag && drag.mode === 'new'){
+    const w = Math.abs(drag.x1-drag.x0), h = Math.abs(drag.y1-drag.y0);
+    if(w > 0.004 && h > 0.004){
+      pushUndo();
+      boxes.push({cls, x:(drag.x0+drag.x1)/2, y:(drag.y0+drag.y1)/2, w, h});
+      sel = boxes.length-1; dirty = true;
+    }
+  }
+  drag = null; draw();
+});
+
+cv.addEventListener('dblclick', () => { if(pending) closePoly(); });
+
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect(), sx = e.clientX-r.left, sy = e.clientY-r.top;
+  const k = Math.exp(-e.deltaY * 0.0016);
+  const ns = Math.max(fit*0.5, Math.min(fit*20, view.s * k));
+  view.x = sx - (sx - view.x) * (ns/view.s);
+  view.y = sy - (sy - view.y) * (ns/view.s);
+  view.s = ns; draw();
+}, {passive:false});
+
+/* ---------- клавиатура ---------- */
+function snapshot(){ return JSON.stringify({boxes, polys}); }
+function pushUndo(){ undoStack.push(snapshot()); if(undoStack.length > 60) undoStack.shift(); }
+
+window.addEventListener('keydown', e => {
+  if(e.code === 'Space'){ spaceHeld = true; cv.style.cursor = 'grab'; e.preventDefault(); return; }
+  if((e.metaKey||e.ctrlKey) && e.key.toLowerCase() === 'z'){
+    if(undoStack.length){
+      const s = JSON.parse(undoStack.pop());
+      boxes = s.boxes; polys = s.polys; sel = -1; pending = null; dirty = true; draw();
+    }
+    e.preventDefault(); return;
+  }
+  if(e.key === 'Enter'){ if(pending) closePoly(); return; }
+  if(e.key === 'Escape'){ if(pending){ pending = null; draw(); } return; }
+  if(e.key >= '1' && e.key <= String(CLASSES.length)){
+    cls = +e.key - 1;
+    if(sel >= 0 && !pending){
+      pushUndo();
+      (seg() ? polys : boxes)[sel].cls = cls; dirty = true;
+    }
+    renderClasses(); draw(); return;
+  }
+  const k = e.key.toLowerCase();
+  if(k === 'backspace' || k === 'delete'){
+    if(pending){                       // сначала откатываем точки текущего контура
+      pending.splice(-2);
+      if(!pending.length) pending = null;
+      draw();
+    } else if(sel >= 0){
+      pushUndo();
+      (seg() ? polys : boxes).splice(sel,1); sel = -1; dirty = true; draw();
+    }
+    e.preventDefault(); return;
+  }
+  if(k === 'a' || e.key === 'ArrowLeft'){ go(-1); return; }
+  if(k === 'd' || e.key === 'ArrowRight'){ go(+1); return; }
+  if(k === 'e'){ pushUndo(); boxes = []; polys = []; pending = null; dirty = true; go(+1); return; }
+  if(k === '0'){ resetView(); draw(); return; }
+});
+window.addEventListener('keyup', e => {
+  if(e.code === 'Space'){ spaceHeld = false; cv.style.cursor = 'crosshair'; }
+});
+
+/* ---------- данные ---------- */
+async function save(){
+  if(!items[idx]) return;
+  await fetch(`/api/label/${encodeURIComponent(items[idx].file)}?mode=${mode}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({boxes, polys, reviewed:true})
+  });
+  items[idx].reviewed = true;
+  dirty = false;
+  refreshStats();
+}
+
+async function load(i){
+  if(i < 0 || i >= items.length) return;
+  idx = i; sel = -1; undoStack = []; pending = null;
+  const it = items[idx];
+  const r = await (await fetch(
+    `/api/label/${encodeURIComponent(it.file)}?mode=${mode}`)).json();
+  boxes = r.boxes; polys = r.polys || []; dirty = false;
+  img = new Image();
+  img.onload = () => { resetView(); draw(); };
+  img.src = '/api/image/' + encodeURIComponent(it.file);
+  $('top').innerHTML = `<b>${idx+1} / ${items.length}</b> &nbsp; кан ${it.channel} · `
+    + `${it.tod === 'night' ? 'ночь' : 'день'} · ${it.vehicle || ''} `
+    + (it.reviewed ? '· <span style="color:#38d996">✓</span>' : '');
+}
+
+async function go(d){
+  if(pending) closePoly();
+  if(dirty || (items[idx] && !items[idx].reviewed)) await save();
+  if(idx + d < 0){ toast('первый кадр'); return; }
+  if(idx + d >= items.length){ toast('готово, кадры кончились'); return; }
+  load(idx + d);
+}
+
+async function refreshStats(){
+  const s = await (await fetch('/api/stats?mode=' + mode)).json();
+  $('pbar').style.width = (100*s.reviewed/Math.max(1,s.total)) + '%';
+  $('pnum').textContent = `${s.reviewed} из ${s.total} кадров`;
+  $('counts').innerHTML = Object.entries(s.per_class)
+    .map(([k,v]) => `<li>${k}: <b style="color:var(--fg)">${v}</b></li>`).join('');
+}
+
+function renderClasses(){
+  $('classes').innerHTML = CLASSES.map((n,i) =>
+    `<div class="cls ${i===cls?'on':''}" style="color:${COLORS[i]}" data-i="${i}">
+       <span class="swatch" style="background:${COLORS[i]}"></span>
+       <span style="color:var(--fg)">${n}</span><span class="key">${i+1}</span>
+     </div>`).join('');
+  document.querySelectorAll('.cls').forEach(el =>
+    el.onclick = () => { cls = +el.dataset.i; renderClasses(); });
+}
+
+function renderMode(){
+  CLASSES = seg() ? CFG.seg_classes : CFG.classes;
+  COLORS = PALETTE[mode];
+  cls = 0; sel = -1; pending = null;
+  $('hint').innerHTML = HINT[mode];
+  $('guide').innerHTML = GUIDE[mode]
+    .map(([n,d]) => `<li><b>${n}</b> — ${d}</li>`).join('');
+  $('modenote').textContent = seg()
+    ? 'только крупный план: ' + CFG.seg_channels.join(', ')
+    : 'общий план, боксы';
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.m === mode));
+  renderClasses();
+  fillChannels();
+}
+
+function fillChannels(){
+  const keep = $('fch').value;
+  const list = seg() ? CFG.seg_channels : CFG.all_channels;
+  $('fch').innerHTML = '<option value="">все каналы</option>'
+    + list.map(c => `<option value="${c}">${c}</option>`).join('');
+  if(list.includes(keep)) $('fch').value = keep;
+}
+
+async function reload(){
+  const q = new URLSearchParams({channel:$('fch').value, tod:$('ftod').value,
+                                status:$('fst').value, mode});
+  const r = await (await fetch('/api/images?' + q)).json();
+  items = r.items;
+  if(!items.length){ $('top').textContent = 'по фильтру ничего нет';
+                     boxes = []; polys = []; draw(); refreshStats(); return; }
+  load(0); refreshStats();
+}
+
+(async function init(){
+  CFG = await (await fetch('/api/config')).json();
+  const all = (await (await fetch('/api/images')).json()).items;
+  CFG.all_channels = [...new Set(all.map(i => i.channel))].sort();
+  renderMode();
+  document.querySelectorAll('.tab').forEach(t => t.onclick = async () => {
+    if(t.dataset.m === mode) return;
+    if(dirty) await save();
+    mode = t.dataset.m; renderMode(); reload();
+  });
+  ['fch','ftod','fst'].forEach(id => $(id).onchange = reload);
+  window.addEventListener('resize', resize);
+  resize();
+  reload();
+})();
+</script>
+</body>
+</html>

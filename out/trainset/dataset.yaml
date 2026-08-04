@@ -1,0 +1,9 @@
+path: .
+train: images
+val: images
+
+names:
+  0: truck
+  1: truck_body
+  2: grapple
+  3: excavator
