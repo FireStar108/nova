@@ -36,7 +36,7 @@ class FpsCache:
         self.file = cache_dir / _CACHE_NAME
         self.data: dict[str, dict] = {}
         if self.file.exists():
-            self.data = json.loads(self.file.read_text())
+            self.data = json.loads(self.file.read_text(encoding="utf-8"))
 
     def probe(self, clip: Clip) -> dict:
         key = str(clip.path)
@@ -52,7 +52,7 @@ class FpsCache:
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
-        self.file.write_text(json.dumps(self.data, indent=1))
+        self.file.write_text(json.dumps(self.data, indent=1), encoding="utf-8")
 
 
 @dataclass

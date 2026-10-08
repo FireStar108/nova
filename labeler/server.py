@@ -39,10 +39,13 @@ LABELS_SEG = TRAINSET / "labels_seg"
 REVIEW_SEG = TRAINSET / "review_seg.json"
 
 CLASSES = ["truck", "truck_body", "grapple", "excavator"]
-SEG_CLASSES = ["grapple", "scrap"]
+# grapple разбит на open/closed, а не единый класс + флаг: раскрытие ковша
+# меняет силуэт сильнее, чем день/ночь на трак-детекторе, отдельный класс
+# для сети информативнее отдельного бита состояния на весь кадр
+SEG_CLASSES = ["grapple_open", "grapple_closed", "scrap", "trailer"]
 
-# на общем плане (246 — площадка с 30 м, 161 — PTZ) полигоны бессмысленны:
-# ковш там несколько десятков пикселей, граница лома не читается вообще
+# 235 дал только 2 сессии — мало разнообразия груза в ковше для scrap.
+# Добавляем 238/239: кадры уже извлечены, только не были включены в фильтр
 SEG_CHANNELS = {"235", "238", "239"}
 
 MODES = {
@@ -82,23 +85,23 @@ class SavePayload(BaseModel):
 
 def _load_review(path: Path) -> dict[str, bool]:
     if path.exists():
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     return {}
 
 
 def _save_review(path: Path, data: dict[str, bool]) -> None:
-    path.write_text(json.dumps(data, indent=0))
+    path.write_text(json.dumps(data, indent=0), encoding="utf-8")
 
 
 def _meta() -> dict[str, dict]:
     if not MANIFEST.exists():
         return {}
-    return {m["file"]: m for m in json.loads(MANIFEST.read_text())}
+    return {m["file"]: m for m in json.loads(MANIFEST.read_text(encoding="utf-8"))}
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return (Path(__file__).parent / "static" / "index.html").read_text()
+    return (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/config")
@@ -142,7 +145,7 @@ def stats(mode: str = "det") -> dict:
     for txt in labels.glob("*.txt"):
         if not review.get(f"{txt.stem}.jpg"):
             continue  # считаем только проверенное вручную, не предразметку
-        for line in txt.read_text().splitlines():
+        for line in txt.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 c = int(line.split()[0])
                 if 0 <= c < len(classes):
@@ -169,7 +172,7 @@ def get_label(name: str, mode: str = "det") -> dict:
     boxes: list[dict] = []
     polys: list[dict] = []
     if txt.exists():
-        for line in txt.read_text().splitlines():
+        for line in txt.read_text(encoding="utf-8").splitlines():
             parts = line.split()
             if mode == "det" and len(parts) == 5:
                 c, x, y, w, h = parts

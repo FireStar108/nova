@@ -135,7 +135,7 @@ def _manifest() -> dict[str, dict]:
     path = TRAINSET / "manifest.json"
     if not path.exists():
         return {}
-    return {r["file"]: r for r in json.loads(path.read_text())}
+    return {r["file"]: r for r in json.loads(path.read_text(encoding="utf-8"))}
 
 
 def _slug(s: str) -> str:

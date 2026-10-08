@@ -64,7 +64,10 @@ def main() -> None:
 
             for fr in iter_frames(clip, fps, stride=stride, max_frames=want):
                 name = f"{ch}_{tod}_{_slug(s.vehicle)}_{tag}_{fr.idx:05d}.jpg"
-                cv2.imwrite(str(DST / name), fr.image, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                # cv2.imwrite не умеет в Unicode-пути на Windows (fopen через
+                # локальную кодовую страницу) — кодируем в память и пишем сами
+                ok, buf = cv2.imencode(".jpg", fr.image, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                (DST / name).write_bytes(buf.tobytes())
                 manifest.append({
                     "file": name, "channel": ch, "tod": tod, "day": s.day,
                     "vehicle": s.vehicle, "clip": str(clip.path.relative_to(ROOT)),
@@ -74,7 +77,7 @@ def main() -> None:
 
     cache.save()
     (OUT / "trainset" / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=1)
+        json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8"
     )
 
     print(f"кадров извлечено: {len(manifest)} -> {DST}")

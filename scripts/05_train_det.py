@@ -182,14 +182,14 @@ def _manifest() -> dict[str, dict]:
     path = TRAINSET / "manifest.json"
     if not path.exists():
         return {}
-    return {r["file"]: r for r in json.loads(path.read_text())}
+    return {r["file"]: r for r in json.loads(path.read_text(encoding="utf-8"))}
 
 
 def _warn_unreviewed() -> None:
     review = TRAINSET / "review.json"
     checked = 0
     if review.exists():
-        checked = sum(1 for v in json.loads(review.read_text()).values() if v)
+        checked = sum(1 for v in json.loads(review.read_text(encoding="utf-8")).values() if v)
     if checked == 0:
         print(
             "! разметка не подтверждена руками ни на одном кадре:\n"
